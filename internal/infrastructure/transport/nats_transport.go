@@ -195,7 +195,13 @@ func (nt *NATSTransport) Request(ctx context.Context, subject string, message *t
 		return nil, fmt.Errorf("not connected to NATS")
 	}
 
-	data, err := json.Marshal(message)
+	// Create a temporary message without metadata for marshaling
+	msgToSend := &transport.Message{
+		ID:   message.ID,
+		Data: message.Data,
+	}
+
+	data, err := json.Marshal(msgToSend)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal message: %w", err)
 	}
