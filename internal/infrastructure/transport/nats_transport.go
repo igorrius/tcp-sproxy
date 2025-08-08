@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"sync"
 	"time"
 
@@ -34,11 +36,11 @@ type NATSConfig struct {
 }
 
 // NewNATSTransport creates a new NATS transport instance
-func NewNATSTransport() *NATSTransport {
+func NewNATSTransport(logger *logrus.Entry) *NATSTransport {
 	return &NATSTransport{
 		subs:    make(map[string]*nats.Subscription),
 		msgChan: make(chan *transport.Message, 100),
-		logger:  logrus.WithField("transport", "nats"),
+		logger:  logger,
 	}
 }
 
@@ -151,6 +153,18 @@ func (nt *NATSTransport) Subscribe(ctx context.Context, subject string) (<-chan 
 			nt.logger.WithError(err).Error("Failed to unmarshal message")
 			return
 		}
+		transportMsg.Reply = msg.Reply
+
+		// Manually decode headers if they exist
+		if msg.Header != nil {
+			meta := make(map[string]string)
+			for key, values := range msg.Header {
+				if len(values) > 0 {
+					meta[key] = values[0]
+				}
+			}
+			transportMsg.Metadata = meta
+		}
 
 		select {
 		case nt.msgChan <- &transportMsg:
@@ -186,13 +200,23 @@ func (nt *NATSTransport) Request(ctx context.Context, subject string, message *t
 		return nil, fmt.Errorf("failed to marshal message: %w", err)
 	}
 
+	// Create a NATS message and set headers from metadata
+	natsMsg := nats.NewMsg(subject)
+	natsMsg.Data = data
+	if message.Metadata != nil {
+		natsMsg.Header = make(nats.Header)
+		for k, v := range message.Metadata {
+			natsMsg.Header.Set(k, v)
+		}
+	}
+
 	// Send request with timeout
 	timeout := nt.config.Timeout
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
 
-	response, err := nt.conn.Request(subject, data, timeout)
+	response, err := nt.conn.RequestMsg(natsMsg, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -245,4 +269,147 @@ func (nt *NATSTransport) IsConnected() bool {
 	nt.mu.RLock()
 	defer nt.mu.RUnlock()
 	return nt.conn != nil && nt.conn.IsConnected()
+}
+
+// NATSConn is a net.Conn implementation for a NATS-based connection
+type NATSConn struct {
+	transport  *NATSTransport
+	id         string
+	localAddr  net.Addr
+	remoteAddr net.Addr
+	readCh     chan []byte
+	closeCh    chan struct{}
+	closed     bool
+	mu         sync.Mutex
+}
+
+func (c *NATSConn) Read(b []byte) (n int, err error) {
+	select {
+	case data := <-c.readCh:
+		n = copy(b, data)
+		return n, nil
+	case <-c.closeCh:
+		return 0, io.EOF
+	}
+}
+
+func (c *NATSConn) Write(b []byte) (n int, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return 0, io.ErrClosedPipe
+	}
+
+	msg := &transport.Message{
+		ID:   c.id,
+		Data: b,
+	}
+
+	// The subject should be something like "p.data.to_server.{connID}"
+	subject := "p.data.to_server." + c.id
+	err = c.transport.Publish(context.Background(), subject, msg)
+	if err != nil {
+		return 0, err
+	}
+	return len(b), nil
+}
+
+func (c *NATSConn) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil
+	}
+	c.closed = true
+	close(c.closeCh)
+	// Also need to notify the other side
+	return nil
+}
+
+func (c *NATSConn) LocalAddr() net.Addr {
+	return c.localAddr
+}
+
+func (c *NATSConn) RemoteAddr() net.Addr {
+	return c.remoteAddr
+}
+
+func (c *NATSConn) SetDeadline(t time.Time) error {
+	return nil // Not implemented
+}
+
+func (c *NATSConn) SetReadDeadline(t time.Time) error {
+	return nil // Not implemented
+}
+
+func (c *NATSConn) SetWriteDeadline(t time.Time) error {
+	return nil // Not implemented
+}
+
+func (nt *NATSTransport) Dial(ctx context.Context, proxyAddr, remoteAddr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid remote address: %w", err)
+	}
+
+	reqMsg := &transport.Message{
+		Metadata: map[string]string{
+			"remote_host": host,
+			"remote_port": port,
+		},
+	}
+
+	// The server listens on "proxy.request"
+	subject := "proxy.request"
+
+	respMsg, err := nt.Request(ctx, subject, reqMsg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to request proxy connection: %w", err)
+	}
+
+	connID := string(respMsg.Data)
+
+	// Create a NATSConn
+	conn := &NATSConn{
+		transport:  nt,
+		id:         connID,
+		readCh:     make(chan []byte, 100),
+		closeCh:    make(chan struct{}),
+		localAddr:  &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}, // Dummy addr
+		remoteAddr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}, // Dummy addr
+	}
+
+	// Subscribe to data messages for this connection
+	dataSubject := "p.data.to_client." + connID
+	sub, err := nt.conn.Subscribe(dataSubject, func(msg *nats.Msg) {
+		var transportMsg transport.Message
+		if err := json.Unmarshal(msg.Data, &transportMsg); err != nil {
+			nt.logger.WithError(err).Error("Failed to unmarshal message")
+			return
+		}
+		conn.readCh <- transportMsg.Data
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to subscribe to data subject: %w", err)
+	}
+
+	// When connection is closed, unsubscribe
+	go func() {
+		<-conn.closeCh
+		sub.Unsubscribe()
+
+		// Also send a close notification to the server
+		closeMsg := &transport.Message{
+			ID:       conn.id,
+			Metadata: map[string]string{"type": "close"},
+		}
+		closeSubject := "p.data.to_server." + conn.id
+		nt.Publish(context.Background(), closeSubject, closeMsg)
+	}()
+
+	return conn, nil
+}
+
+func (nt *NATSTransport) Proxy(dst io.Writer, src io.Reader) (int64, error) {
+	return io.Copy(dst, src)
 }

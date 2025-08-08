@@ -1,0 +1,56 @@
+version: '3.8'
+services:
+  redis:
+    image: redis:7.0-alpine
+    ports:
+      - "6379:6379"
+
+  nats:
+    image: nats:2.9-alpine
+    ports:
+      - "4222:4222"
+
+  proxy-server:
+    build:
+      context: ..
+      dockerfile: integration_tests/build/Dockerfile
+    depends_on:
+      - nats
+    environment:
+      - NATS_URL=nats://nats:4222
+      - LISTEN_ADDR=:8080
+      - PROXY_ADDR=:8081
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    command: /app/server
+
+  proxy-client:
+    build:
+      context: ..
+      dockerfile: integration_tests/build/Dockerfile
+    depends_on:
+      - nats
+      - proxy-server
+    environment:
+      - NATS_URL=nats://nats:4222
+      - LISTEN_ADDR=0.0.0.0:8082
+      - PROXY_ADDR=proxy-server:8081
+      - REMOTE_ADDR=redis:6379
+    ports:
+      - "8082:8082"
+    command: /app/client
+
+  test-runner:
+    build:
+      context: ..
+      dockerfile: integration_tests/build/Dockerfile.test_runner
+    depends_on:
+      - proxy-client
+      - redis
+    environment:
+      - NATS_URL=nats://nats:4222
+      - LISTEN_ADDR=0.0.0.0:8082
+      - PROXY_ADDR=proxy-server:8081
+      - REMOTE_ADDR=redis:6379
+    command: sh -c "sleep 10 && go test -v ./integration_tests/..."

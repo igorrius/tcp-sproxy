@@ -8,7 +8,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/igorrius/tcp-sproxy/internal/application/usecases"
 	"github.com/igorrius/tcp-sproxy/internal/domain/services"
 	"github.com/igorrius/tcp-sproxy/internal/infrastructure/repositories"
 	"github.com/igorrius/tcp-sproxy/internal/infrastructure/transport"
@@ -95,7 +94,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 	// Initialize components
 	connectionRepo := repositories.NewInMemoryConnectionRepository()
-	natsTransport := transport.NewNATSTransport()
+	natsTransport := transport.NewNATSTransport(logger)
 
 	// Connect to NATS
 	natsConfig := &transport.NATSConfig{
@@ -103,73 +102,39 @@ func runServer(cmd *cobra.Command, args []string) error {
 		Timeout: 30 * time.Second,
 	}
 
-	ctx := context.Background()
-	if err := natsTransport.Connect(ctx, natsConfig); err != nil {
+	if err := natsTransport.Connect(context.Background(), natsConfig); err != nil {
 		return fmt.Errorf("failed to connect to NATS: %w", err)
 	}
 	defer natsTransport.Close()
 
-	// Initialize domain service
-	proxyService := services.NewProxyService(connectionRepo, natsTransport)
+	proxyService := services.NewProxyService(connectionRepo, natsTransport, logger)
 
-	// Initialize use case (remote host/port now comes from client messages)
-	proxyUseCase := usecases.NewProxyUseCase(proxyService, connectionRepo, natsTransport, "", 0)
+	// Handle graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// Subscribe to NATS proxy requests
-	msgChan, err := natsTransport.Subscribe(ctx, "proxy.request")
-	if err != nil {
-		return fmt.Errorf("failed to subscribe to proxy requests: %w", err)
-	}
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Handle NATS messages in a goroutine
+	// Start listening for proxy requests
 	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case msg := <-msgChan:
-				if msg == nil {
-					continue
-				}
-
-				// Handle proxy request
-				response, err := proxyService.HandleNATSProxyRequest(ctx, msg)
-				if err != nil {
-					logger.WithError(err).Error("Failed to handle NATS proxy request")
-					continue
-				}
-
-				// Send response back
-				if err := natsTransport.Publish(ctx, "proxy.response", response); err != nil {
-					logger.WithError(err).Error("Failed to send NATS response")
-				}
-			}
+		err := proxyService.HandleNATSProxyRequests(ctx, "proxy.request")
+		if err != nil {
+			logger.WithError(err).Error("Failed to handle NATS proxy requests")
+			cancel() // Stop the application if request handling fails
 		}
 	}()
 
-	// Start cleanup scheduler
-	cleanupCtx, cleanupCancel := context.WithCancel(ctx)
-	defer cleanupCancel()
-	proxyUseCase.StartCleanupScheduler(cleanupCtx, 5*time.Minute)
-
-	logger.WithFields(logrus.Fields{
-		"nats_url": natsConfig.URL,
-	}).Info("Server started successfully - listening for NATS messages")
-
-	// Handle graceful shutdown
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	logger.Info("Server started successfully - listening for NATS messages")
 
 	// Wait for shutdown signal
 	<-sigChan
 	logger.Info("Shutting down server...")
+	cancel() // Cancel context to stop services
 
-	// Give connections time to close gracefully
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	// Give services time to gracefully shutdown
+	time.Sleep(2 * time.Second)
 
-	// Wait for shutdown timeout or context cancellation
-	<-shutdownCtx.Done()
 	logger.Info("Server shutdown complete")
 
 	return nil
