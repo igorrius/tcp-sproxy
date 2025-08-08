@@ -7,6 +7,7 @@ import (
 // Message represents a transport message
 type Message struct {
 	ID       string
+	Reply    string
 	Data     []byte
 	Metadata map[string]string
 }
