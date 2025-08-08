@@ -16,13 +16,13 @@ import (
 
 // NATSTransport implements the Transport interface using NATS
 type NATSTransport struct {
-	conn    *nats.Conn
-	js      nats.JetStreamContext
-	config  *NATSConfig
-	logger  *logrus.Entry
-	mu      sync.RWMutex
-	subs    map[string]*nats.Subscription
-	msgChan chan *transport.Message
+	conn     *nats.Conn
+	js       nats.JetStreamContext
+	config   *NATSConfig
+	logger   *logrus.Entry
+	mu       sync.RWMutex
+	subs     map[string]*nats.Subscription
+	subChans map[string]chan *transport.Message
 }
 
 // NATSConfig represents NATS-specific configuration
@@ -38,9 +38,9 @@ type NATSConfig struct {
 // NewNATSTransport creates a new NATS transport instance
 func NewNATSTransport(logger *logrus.Entry) *NATSTransport {
 	return &NATSTransport{
-		subs:    make(map[string]*nats.Subscription),
-		msgChan: make(chan *transport.Message, 100),
-		logger:  logger,
+		subs:     make(map[string]*nats.Subscription),
+		subChans: make(map[string]chan *transport.Message),
+		logger:   logger,
 	}
 }
 
@@ -132,7 +132,7 @@ func (nt *NATSTransport) Send(ctx context.Context, subject string, message *tran
 	return nil
 }
 
-// Subscribe subscribes to a subject and returns a channel for receiving messages
+// Subscribe subscribes to a subject and returns a dedicated channel for receiving messages
 func (nt *NATSTransport) Subscribe(ctx context.Context, subject string) (<-chan *transport.Message, error) {
 	if !nt.IsConnected() {
 		return nil, fmt.Errorf("not connected to NATS")
@@ -145,6 +145,8 @@ func (nt *NATSTransport) Subscribe(ctx context.Context, subject string) (<-chan 
 		return nil, fmt.Errorf("already subscribed to subject: %s", subject)
 	}
 	nt.mu.RUnlock()
+
+	ch := make(chan *transport.Message, 100)
 
 	// Create subscription
 	sub, err := nt.conn.Subscribe(subject, func(msg *nats.Msg) {
@@ -167,11 +169,11 @@ func (nt *NATSTransport) Subscribe(ctx context.Context, subject string) (<-chan 
 		}
 
 		select {
-		case nt.msgChan <- &transportMsg:
+		case ch <- &transportMsg:
 		case <-ctx.Done():
 			nt.logger.Debug("Context cancelled, dropping message")
 		default:
-			nt.logger.Warn("Message channel full, dropping message")
+			nt.logger.Warn("Message channel for subject is full, dropping message")
 		}
 	})
 
@@ -179,14 +181,15 @@ func (nt *NATSTransport) Subscribe(ctx context.Context, subject string) (<-chan 
 		return nil, fmt.Errorf("failed to subscribe: %w", err)
 	}
 
-	// Store subscription
+	// Store subscription and channel
 	nt.mu.Lock()
 	nt.subs[subject] = sub
+	nt.subChans[subject] = ch
 	nt.mu.Unlock()
 
 	nt.logger.WithField("subject", subject).Info("Subscribed to subject")
 
-	return nt.msgChan, nil
+	return ch, nil
 }
 
 // Request sends a request and waits for a response
@@ -263,8 +266,11 @@ func (nt *NATSTransport) Close() error {
 		nt.conn = nil
 	}
 
-	// Close message channel
-	close(nt.msgChan)
+	// Close per-subject channels
+	for subject, ch := range nt.subChans {
+		close(ch)
+		delete(nt.subChans, subject)
+	}
 
 	nt.logger.Info("NATS transport closed")
 	return nil
