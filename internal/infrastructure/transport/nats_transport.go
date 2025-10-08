@@ -381,15 +381,27 @@ func (nt *NATSTransport) Dial(ctx context.Context, proxyAddr, remoteAddr string)
 
 	connID := string(respMsg.Data)
 
-	// Create a NATSConn
-	conn := &NATSConn{
-		transport:  nt,
-		id:         connID,
-		readCh:     make(chan []byte, 100),
-		closeCh:    make(chan struct{}),
-		localAddr:  &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}, // Dummy addr
-		remoteAddr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}, // Dummy addr
-	}
+       // Parse proxyAddr and remoteAddr for accurate address info
+       var localAddr, remoteAddrTCP *net.TCPAddr
+       localAddr, err = net.ResolveTCPAddr("tcp", proxyAddr)
+       if err != nil {
+	       nt.logger.WithError(err).Warnf("Failed to parse proxyAddr %q, using dummy address", proxyAddr)
+	       localAddr = &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}
+       }
+       remoteAddrTCP, err = net.ResolveTCPAddr("tcp", remoteAddr)
+       if err != nil {
+	       nt.logger.WithError(err).Warnf("Failed to parse remoteAddr %q, using dummy address", remoteAddr)
+	       remoteAddrTCP = &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}
+       }
+
+       conn := &NATSConn{
+	       transport:  nt,
+	       id:         connID,
+	       readCh:     make(chan []byte, 100),
+	       closeCh:    make(chan struct{}),
+	       localAddr:  localAddr,
+	       remoteAddr: remoteAddrTCP,
+       }
 
 	// Subscribe to data messages for this connection
 	dataSubject := "p.data.to_client." + connID
