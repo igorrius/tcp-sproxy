@@ -334,7 +334,7 @@ func (c *NATSConn) Close() error {
 	}
 	c.closed = true
 	close(c.closeCh)
-	// Also need to notify the other side
+	// Close notification is sent by the goroutine monitoring closeCh in Dial()
 	return nil
 }
 
