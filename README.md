@@ -169,6 +169,30 @@ docker-compose -f integration_tests/docker-compose.yml up -d --build
 docker-compose -f integration_tests/docker-compose.yml down
 ```
 
+## Continuous Integration
+
+This project uses GitHub Actions for automated testing:
+
+### Unit Tests
+- **Workflow**: `.github/workflows/test.yml`
+- **Triggers**: Pull requests and pushes to `main`/`master` branches
+- **Features**:
+  - Runs on Go 1.24
+  - Executes `go test` with race detection
+  - Generates code coverage reports
+  - Uploads coverage to Codecov
+  - Caches Go modules for faster builds
+
+### Integration Tests
+- **Workflow**: `.github/workflows/integration-test.yml`
+- **Triggers**: Manual dispatch, daily schedule (2 AM UTC), pushes to `main`/`master`
+- **Features**:
+  - Sets up Redis and NATS services
+  - Runs Docker-based integration tests
+  - Uses the existing `make test-integration` command
+
+Both workflows ensure code quality and functionality across different scenarios.
+
 ## Logging
 Both components use logrus. Levels: `debug`, `info`, `warn`, `error` (set via `--log-level` or `LOG_LEVEL`).
 

@@ -147,6 +147,16 @@ func (s *ProxyService) handleIndividualProxyRequest(ctx context.Context, msg *tr
 	return nil
 }
 
+// HandleNATSProxyRequest is a public wrapper for testing individual proxy requests
+func (s *ProxyService) HandleNATSProxyRequest(ctx context.Context, msg *transport.Message) (*transport.Message, error) {
+	if err := s.handleIndividualProxyRequest(ctx, msg); err != nil {
+		return nil, err
+	}
+
+	// Return a simple response message
+	return transport.NewMessage(msg.ID, []byte("OK")), nil
+}
+
 // handleNATSConnection manages the data flow for NATS-based connections
 func (ps *ProxyService) handleNATSConnection(ctx context.Context, connection *entities.Connection, replySubject string) {
 	defer func() {

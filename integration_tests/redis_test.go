@@ -2,6 +2,7 @@ package integration_tests
 
 import (
 	"context"
+	"net"
 	"testing"
 	"time"
 
@@ -10,6 +11,12 @@ import (
 )
 
 func TestRedisProxy(t *testing.T) {
+	// Skip this test if not running in Docker Compose environment
+	_, err := net.LookupHost("proxy-client")
+	if err != nil {
+		t.Skip("Skipping integration test - proxy-client not available (not running in Docker Compose environment)")
+	}
+
 	ctx := context.Background()
 
 	rdb := redis.NewClient(&redis.Options{
@@ -20,7 +27,7 @@ func TestRedisProxy(t *testing.T) {
 	// Wait for the proxy to be ready
 	time.Sleep(5 * time.Second)
 
-	_, err := rdb.Ping(ctx).Result()
+	_, err = rdb.Ping(ctx).Result()
 	require.NoError(t, err)
 
 	err = rdb.Set(ctx, "key", "value", 0).Err()

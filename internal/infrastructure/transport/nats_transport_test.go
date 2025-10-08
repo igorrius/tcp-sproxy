@@ -4,13 +4,16 @@ import (
 	"context"
 	"testing"
 
-	"github.com/nats-io/nats.go"
+	"github.com/sirupsen/logrus"
 )
 
 // TestNewNATSTransport tests creating a new NATS transport
 func TestNewNATSTransport(t *testing.T) {
+	// Setup
+	logger := logrus.NewEntry(logrus.New())
+
 	// Execute
-	tr := NewNATSTransport()
+	tr := NewNATSTransport(logger)
 
 	// Verify
 	if tr == nil {
@@ -21,8 +24,8 @@ func TestNewNATSTransport(t *testing.T) {
 		t.Error("subs map not initialized")
 	}
 
-	if tr.msgChan == nil {
-		t.Error("msgChan not initialized")
+	if tr.subChans == nil {
+		t.Error("subChans map not initialized")
 	}
 }
 
@@ -35,7 +38,8 @@ func TestNATSTransport_Connect(t *testing.T) {
 // TestNATSTransport_Disconnect tests disconnecting from NATS
 func TestNATSTransport_Disconnect(t *testing.T) {
 	// Setup
-	tr := NewNATSTransport()
+	logger := logrus.NewEntry(logrus.New())
+	tr := NewNATSTransport(logger)
 
 	// Test when not connected
 	tr.conn = nil
@@ -78,13 +82,11 @@ func TestNATSTransport_Close(t *testing.T) {
 // TestNATSTransport_IsConnected tests checking if the transport is connected
 func TestNATSTransport_IsConnected(t *testing.T) {
 	// Setup
-	tr := NewNATSTransport()
+	logger := logrus.NewEntry(logrus.New())
+	tr := NewNATSTransport(logger)
 
 	// Test when not connected
 	if tr.IsConnected() {
 		t.Error("IsConnected should return false when not connected")
 	}
 }
-
-// Override the nats.Connect function for testing
-var natsConnect = nats.Connect
