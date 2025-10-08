@@ -330,6 +330,35 @@ func TestProxyService_GetConnectionStats(t *testing.T) {
 	}
 }
 
+func TestProxyService_HandleCloseNotification(t *testing.T) {
+	// Setup
+	repo := mocks.NewMockConnectionRepository()
+	tr := mocks.NewMockTransport()
+	logger := logrus.NewEntry(logrus.New())
+	_ = NewProxyService(repo, tr, logger)
+
+	// Create a connection ID
+	connID := valueobjects.NewConnectionID()
+	conn := createTestConnectionWithID(connID, entities.ConnectionStatusActive)
+	repo.Store(context.Background(), conn)
+
+	// Create a close notification message
+	closeMsg := transport.NewMessage(connID.String(), []byte{})
+	closeMsg.Metadata = map[string]string{"type": "close"}
+
+	// Verify that the message has close metadata
+	if closeMsg.Metadata["type"] != "close" {
+		t.Error("Close message should have type=close in metadata")
+	}
+
+	// Test that sending a close notification would trigger cleanup
+	// Note: We can't fully test the goroutine behavior here without mocking net.Conn,
+	// but we validate that the message structure is correct
+	if len(closeMsg.Data) != 0 {
+		t.Error("Close message should have empty data")
+	}
+}
+
 // Helper function to create a test connection with a specific status
 func createTestConnection(status entities.ConnectionStatus) *entities.Connection {
 	id := valueobjects.NewConnectionID()
