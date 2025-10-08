@@ -11,6 +11,7 @@ import (
 	"github.com/igorrius/tcp-sproxy/internal/domain/services"
 	"github.com/igorrius/tcp-sproxy/internal/domain/valueobjects"
 	"github.com/igorrius/tcp-sproxy/internal/test/mocks"
+	"github.com/sirupsen/logrus"
 )
 
 // mockNetConn is a mock implementation of net.Conn for testing
@@ -79,7 +80,8 @@ func TestNewProxyUseCase(t *testing.T) {
 	// Setup
 	repo := mocks.NewMockConnectionRepository()
 	tr := mocks.NewMockTransport()
-	proxyService := services.NewProxyService(repo, tr)
+	logger := logrus.NewEntry(logrus.New())
+	proxyService := services.NewProxyService(repo, tr, logger)
 	remoteHost := "192.168.1.1"
 	remotePort := 8080
 
@@ -116,7 +118,8 @@ func TestProxyUseCase_HandleNewConnection(t *testing.T) {
 	// Setup
 	repo := mocks.NewMockConnectionRepository()
 	tr := mocks.NewMockTransport()
-	proxyService := services.NewProxyService(repo, tr)
+	logger := logrus.NewEntry(logrus.New())
+	proxyService := services.NewProxyService(repo, tr, logger)
 	remoteHost := "192.168.1.1"
 	remotePort := 8080
 	useCase := NewProxyUseCase(proxyService, repo, tr, remoteHost, remotePort)
@@ -148,7 +151,8 @@ func TestProxyUseCase_GetConnectionStats(t *testing.T) {
 	// Setup
 	repo := mocks.NewMockConnectionRepository()
 	tr := mocks.NewMockTransport()
-	proxyService := services.NewProxyService(repo, tr)
+	logger := logrus.NewEntry(logrus.New())
+	proxyService := services.NewProxyService(repo, tr, logger)
 	remoteHost := "192.168.1.1"
 	remotePort := 8080
 	useCase := NewProxyUseCase(proxyService, repo, tr, remoteHost, remotePort)
@@ -177,7 +181,8 @@ func TestProxyUseCase_CloseConnection(t *testing.T) {
 	// Setup
 	repo := mocks.NewMockConnectionRepository()
 	tr := mocks.NewMockTransport()
-	proxyService := services.NewProxyService(repo, tr)
+	logger := logrus.NewEntry(logrus.New())
+	proxyService := services.NewProxyService(repo, tr, logger)
 	remoteHost := "192.168.1.1"
 	remotePort := 8080
 	useCase := NewProxyUseCase(proxyService, repo, tr, remoteHost, remotePort)
@@ -216,7 +221,8 @@ func TestProxyUseCase_CleanupOldConnections(t *testing.T) {
 	// Setup
 	repo := mocks.NewMockConnectionRepository()
 	tr := mocks.NewMockTransport()
-	proxyService := services.NewProxyService(repo, tr)
+	logger := logrus.NewEntry(logrus.New())
+	proxyService := services.NewProxyService(repo, tr, logger)
 	remoteHost := "192.168.1.1"
 	remotePort := 8080
 	useCase := NewProxyUseCase(proxyService, repo, tr, remoteHost, remotePort)
@@ -248,7 +254,8 @@ func TestProxyUseCase_StartCleanupScheduler(t *testing.T) {
 	// Setup
 	repo := mocks.NewMockConnectionRepository()
 	tr := mocks.NewMockTransport()
-	proxyService := services.NewProxyService(repo, tr)
+	logger := logrus.NewEntry(logrus.New())
+	proxyService := services.NewProxyService(repo, tr, logger)
 	remoteHost := "192.168.1.1"
 	remotePort := 8080
 	useCase := NewProxyUseCase(proxyService, repo, tr, remoteHost, remotePort)

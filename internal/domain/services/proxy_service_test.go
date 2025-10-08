@@ -11,6 +11,7 @@ import (
 	"github.com/igorrius/tcp-sproxy/internal/domain/valueobjects"
 	"github.com/igorrius/tcp-sproxy/internal/test/mocks"
 	"github.com/igorrius/tcp-sproxy/pkg/transport"
+	"github.com/sirupsen/logrus"
 )
 
 // mockNetConn is a mock implementation of net.Conn for testing
@@ -79,9 +80,10 @@ func TestNewProxyService(t *testing.T) {
 	// Setup
 	repo := mocks.NewMockConnectionRepository()
 	tr := mocks.NewMockTransport()
+	logger := logrus.NewEntry(logrus.New())
 
 	// Execute
-	service := NewProxyService(repo, tr)
+	service := NewProxyService(repo, tr, logger)
 
 	// Verify
 	if service == nil {
@@ -101,7 +103,8 @@ func TestProxyService_ProxyConnection(t *testing.T) {
 	// Setup
 	repo := mocks.NewMockConnectionRepository()
 	tr := mocks.NewMockTransport()
-	service := NewProxyService(repo, tr)
+	logger := logrus.NewEntry(logrus.New())
+	service := NewProxyService(repo, tr, logger)
 
 	clientAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 12345}
 	clientConn := newMockNetConn(clientAddr, clientAddr)
@@ -135,7 +138,8 @@ func TestProxyService_HandleNATSProxyRequest(t *testing.T) {
 	// Setup
 	repo := mocks.NewMockConnectionRepository()
 	tr := mocks.NewMockTransport()
-	service := NewProxyService(repo, tr)
+	logger := logrus.NewEntry(logrus.New())
+	service := NewProxyService(repo, tr, logger)
 
 	// Create a valid message
 	msg := transport.NewMessage("test-id", []byte("test-data"))
@@ -210,7 +214,8 @@ func TestProxyService_GetActiveConnections(t *testing.T) {
 	// Setup
 	repo := mocks.NewMockConnectionRepository()
 	tr := mocks.NewMockTransport()
-	service := NewProxyService(repo, tr)
+	logger := logrus.NewEntry(logrus.New())
+	service := NewProxyService(repo, tr, logger)
 
 	// Create some test connections
 	_ = createTestConnection(entities.ConnectionStatusActive)
@@ -243,7 +248,8 @@ func TestProxyService_CloseConnection(t *testing.T) {
 	// Setup
 	repo := mocks.NewMockConnectionRepository()
 	tr := mocks.NewMockTransport()
-	service := NewProxyService(repo, tr)
+	logger := logrus.NewEntry(logrus.New())
+	service := NewProxyService(repo, tr, logger)
 
 	// Create a test connection ID and connection
 	connID := valueobjects.NewConnectionID()
@@ -292,7 +298,8 @@ func TestProxyService_GetConnectionStats(t *testing.T) {
 	// Setup
 	repo := mocks.NewMockConnectionRepository()
 	tr := mocks.NewMockTransport()
-	service := NewProxyService(repo, tr)
+	logger := logrus.NewEntry(logrus.New())
+	service := NewProxyService(repo, tr, logger)
 
 	// Create some test connections with different statuses
 	_ = createTestConnection(entities.ConnectionStatusActive)
