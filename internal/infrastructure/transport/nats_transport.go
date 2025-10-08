@@ -334,7 +334,7 @@ func (c *NATSConn) Close() error {
 	}
 	c.closed = true
 	close(c.closeCh)
-	// Also need to notify the other side
+	// Close notification is sent by the goroutine monitoring closeCh in Dial()
 	return nil
 }
 
@@ -411,6 +411,19 @@ func (nt *NATSTransport) Dial(ctx context.Context, proxyAddr, remoteAddr string)
 			nt.logger.WithError(err).Error("Failed to unmarshal message")
 			return
 		}
+		
+		// Check if this is a close notification
+		if transportMsg.Metadata != nil && transportMsg.Metadata["type"] == "close" {
+			nt.logger.WithField("connection_id", connID).Info("Received close notification from server")
+			conn.mu.Lock()
+			if !conn.closed {
+				conn.closed = true
+				close(conn.closeCh)
+			}
+			conn.mu.Unlock()
+			return
+		}
+		
 		conn.readCh <- transportMsg.Data
 	})
 	if err != nil {

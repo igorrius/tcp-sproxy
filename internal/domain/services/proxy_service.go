@@ -195,6 +195,13 @@ func (ps *ProxyService) handleNATSConnection(ctx context.Context, connection *en
 				if err != io.EOF {
 					ps.logger.WithError(err).WithField("connection_id", connection.ID.String()).Error("Read error in remote->nats")
 				}
+				// Send close notification to client
+				closeMsg := transport.NewMessage(connection.ID.String(), []byte{})
+				closeMsg.Metadata = map[string]string{"type": "close"}
+				subject := "p.data.to_client." + connection.ID.String()
+				if pubErr := ps.transport.Publish(ctx, subject, closeMsg); pubErr != nil {
+					ps.logger.WithError(pubErr).WithField("connection_id", connection.ID.String()).Error("Failed to send close notification to client")
+				}
 				errChan <- err
 				return
 			}
@@ -221,6 +228,12 @@ func (ps *ProxyService) handleNATSConnection(ctx context.Context, connection *en
 		for {
 			select {
 			case msg := <-msgChan:
+				// Check if this is a close notification
+				if msg.Metadata != nil && msg.Metadata["type"] == "close" {
+					ps.logger.WithField("connection_id", connection.ID.String()).Info("Received close notification from client")
+					errChan <- io.EOF
+					return
+				}
 				ps.logger.WithField("connection_id", connection.ID.String()).Infof("nats->remote: got message with %d bytes", len(msg.Data))
 				if _, err := remoteConn.Write(msg.Data); err != nil {
 					if err != io.EOF {
