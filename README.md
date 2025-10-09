@@ -169,6 +169,14 @@ docker-compose -f integration_tests/docker-compose.yml up -d --build
 docker-compose -f integration_tests/docker-compose.yml down
 ```
 
+**Note**: Integration tests require the following ports to be available on the host:
+- `4222` - NATS messaging
+- `6379` - Redis database
+- `8080`, `8081` - Proxy server
+- `8082` - Proxy client
+
+If these ports are already in use, you'll need to either stop the conflicting services or modify the port mappings in `integration_tests/docker-compose.yml`.
+
 ## Continuous Integration
 
 This project uses GitHub Actions for automated testing:
@@ -187,9 +195,10 @@ This project uses GitHub Actions for automated testing:
 - **Workflow**: `.github/workflows/integration-test.yml`
 - **Triggers**: Manual dispatch, daily schedule (2 AM UTC), pushes to `main`/`master`
 - **Features**:
-  - Sets up Redis and NATS services
-  - Runs Docker-based integration tests
-  - Uses the existing `make test-integration` command
+  - Runs Docker Compose-based integration tests via `make test-integration`
+  - Automatically spins up Redis, NATS, proxy server, and proxy client containers
+  - Executes end-to-end Redis proxy tests
+  - No manual service setup required - all dependencies managed by Docker Compose
 
 Both workflows ensure code quality and functionality across different scenarios.
 
