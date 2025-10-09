@@ -2,7 +2,9 @@ package transport
 
 import (
 	"context"
+	"net"
 	"testing"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -90,3 +92,192 @@ func TestNATSTransport_IsConnected(t *testing.T) {
 		t.Error("IsConnected should return false when not connected")
 	}
 }
+
+// TestNATSConn_SetDeadline tests setting both read and write deadlines
+func TestNATSConn_SetDeadline(t *testing.T) {
+	logger := logrus.NewEntry(logrus.New())
+	tr := NewNATSTransport(logger)
+	
+	conn := &NATSConn{
+		transport:  tr,
+		id:         "test-conn",
+		readCh:     make(chan []byte, 10),
+		closeCh:    make(chan struct{}),
+		localAddr:  &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8080},
+		remoteAddr: &net.TCPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9090},
+	}
+	
+	deadline := time.Now().Add(5 * time.Second)
+	err := conn.SetDeadline(deadline)
+	if err != nil {
+		t.Errorf("SetDeadline returned error: %v", err)
+	}
+	
+	conn.mu.Lock()
+	if !conn.readDeadline.Equal(deadline) {
+		t.Errorf("Read deadline not set correctly: expected %v, got %v", deadline, conn.readDeadline)
+	}
+	if !conn.writeDeadline.Equal(deadline) {
+		t.Errorf("Write deadline not set correctly: expected %v, got %v", deadline, conn.writeDeadline)
+	}
+	conn.mu.Unlock()
+}
+
+// TestNATSConn_SetReadDeadline tests setting read deadline
+func TestNATSConn_SetReadDeadline(t *testing.T) {
+	logger := logrus.NewEntry(logrus.New())
+	tr := NewNATSTransport(logger)
+	
+	conn := &NATSConn{
+		transport:  tr,
+		id:         "test-conn",
+		readCh:     make(chan []byte, 10),
+		closeCh:    make(chan struct{}),
+		localAddr:  &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8080},
+		remoteAddr: &net.TCPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9090},
+	}
+	
+	deadline := time.Now().Add(5 * time.Second)
+	err := conn.SetReadDeadline(deadline)
+	if err != nil {
+		t.Errorf("SetReadDeadline returned error: %v", err)
+	}
+	
+	conn.mu.Lock()
+	if !conn.readDeadline.Equal(deadline) {
+		t.Errorf("Read deadline not set correctly: expected %v, got %v", deadline, conn.readDeadline)
+	}
+	conn.mu.Unlock()
+}
+
+// TestNATSConn_SetWriteDeadline tests setting write deadline
+func TestNATSConn_SetWriteDeadline(t *testing.T) {
+	logger := logrus.NewEntry(logrus.New())
+	tr := NewNATSTransport(logger)
+	
+	conn := &NATSConn{
+		transport:  tr,
+		id:         "test-conn",
+		readCh:     make(chan []byte, 10),
+		closeCh:    make(chan struct{}),
+		localAddr:  &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8080},
+		remoteAddr: &net.TCPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9090},
+	}
+	
+	deadline := time.Now().Add(5 * time.Second)
+	err := conn.SetWriteDeadline(deadline)
+	if err != nil {
+		t.Errorf("SetWriteDeadline returned error: %v", err)
+	}
+	
+	conn.mu.Lock()
+	if !conn.writeDeadline.Equal(deadline) {
+		t.Errorf("Write deadline not set correctly: expected %v, got %v", deadline, conn.writeDeadline)
+	}
+	conn.mu.Unlock()
+}
+
+// TestNATSConn_ReadWithDeadline tests reading with a deadline
+func TestNATSConn_ReadWithDeadline(t *testing.T) {
+	logger := logrus.NewEntry(logrus.New())
+	tr := NewNATSTransport(logger)
+	
+	conn := &NATSConn{
+		transport:  tr,
+		id:         "test-conn",
+		readCh:     make(chan []byte, 10),
+		closeCh:    make(chan struct{}),
+		localAddr:  &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8080},
+		remoteAddr: &net.TCPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9090},
+	}
+	
+	// Test timeout
+	deadline := time.Now().Add(100 * time.Millisecond)
+	err := conn.SetReadDeadline(deadline)
+	if err != nil {
+		t.Fatalf("SetReadDeadline failed: %v", err)
+	}
+	
+	buffer := make([]byte, 1024)
+	_, err = conn.Read(buffer)
+	if err == nil {
+		t.Error("Expected timeout error, got nil")
+	}
+	// Check if it's a timeout error
+	if netErr, ok := err.(*net.OpError); ok {
+		if netErr.Op != "read" {
+			t.Errorf("Expected Op to be 'read', got: %s", netErr.Op)
+		}
+	} else {
+		t.Errorf("Expected net.OpError, got: %T - %v", err, err)
+	}
+}
+
+// TestNATSConn_ReadWithPastDeadline tests reading when deadline already passed
+func TestNATSConn_ReadWithPastDeadline(t *testing.T) {
+	logger := logrus.NewEntry(logrus.New())
+	tr := NewNATSTransport(logger)
+	
+	conn := &NATSConn{
+		transport:  tr,
+		id:         "test-conn",
+		readCh:     make(chan []byte, 10),
+		closeCh:    make(chan struct{}),
+		localAddr:  &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8080},
+		remoteAddr: &net.TCPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9090},
+	}
+	
+	// Set deadline in the past
+	deadline := time.Now().Add(-1 * time.Second)
+	err := conn.SetReadDeadline(deadline)
+	if err != nil {
+		t.Fatalf("SetReadDeadline failed: %v", err)
+	}
+	
+	buffer := make([]byte, 1024)
+	_, err = conn.Read(buffer)
+	if err == nil {
+		t.Error("Expected timeout error, got nil")
+	}
+}
+
+// TestNATSConn_ReadSuccessBeforeDeadline tests successful read before deadline
+func TestNATSConn_ReadSuccessBeforeDeadline(t *testing.T) {
+	logger := logrus.NewEntry(logrus.New())
+	tr := NewNATSTransport(logger)
+	
+	conn := &NATSConn{
+		transport:  tr,
+		id:         "test-conn",
+		readCh:     make(chan []byte, 10),
+		closeCh:    make(chan struct{}),
+		localAddr:  &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8080},
+		remoteAddr: &net.TCPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9090},
+	}
+	
+	// Set deadline far in the future
+	deadline := time.Now().Add(10 * time.Second)
+	err := conn.SetReadDeadline(deadline)
+	if err != nil {
+		t.Fatalf("SetReadDeadline failed: %v", err)
+	}
+	
+	// Send data to readCh
+	testData := []byte("test data")
+	go func() {
+		conn.readCh <- testData
+	}()
+	
+	buffer := make([]byte, 1024)
+	n, err := conn.Read(buffer)
+	if err != nil {
+		t.Errorf("Read failed: %v", err)
+	}
+	if n != len(testData) {
+		t.Errorf("Expected to read %d bytes, got %d", len(testData), n)
+	}
+	if string(buffer[:n]) != string(testData) {
+		t.Errorf("Expected data %q, got %q", testData, buffer[:n])
+	}
+}
+

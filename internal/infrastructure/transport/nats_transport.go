@@ -285,31 +285,60 @@ func (nt *NATSTransport) IsConnected() bool {
 
 // NATSConn is a net.Conn implementation for a NATS-based connection
 type NATSConn struct {
-	transport  *NATSTransport
-	id         string
-	localAddr  net.Addr
-	remoteAddr net.Addr
-	readCh     chan []byte
-	closeCh    chan struct{}
-	closed     bool
-	mu         sync.Mutex
+	transport     *NATSTransport
+	id            string
+	localAddr     net.Addr
+	remoteAddr    net.Addr
+	readCh        chan []byte
+	closeCh       chan struct{}
+	closed        bool
+	mu            sync.Mutex
+	readDeadline  time.Time
+	writeDeadline time.Time
 }
 
 func (c *NATSConn) Read(b []byte) (n int, err error) {
+	c.mu.Lock()
+	deadline := c.readDeadline
+	c.mu.Unlock()
+
+	var timer *time.Timer
+	var timeoutCh <-chan time.Time
+	if !deadline.IsZero() {
+		timeout := time.Until(deadline)
+		if timeout <= 0 {
+			return 0, &net.OpError{Op: "read", Net: "nats", Err: fmt.Errorf("i/o timeout")}
+		}
+		timer = time.NewTimer(timeout)
+		timeoutCh = timer.C
+		defer timer.Stop()
+	}
+
 	select {
 	case data := <-c.readCh:
 		n = copy(b, data)
 		return n, nil
 	case <-c.closeCh:
 		return 0, io.EOF
+	case <-timeoutCh:
+		return 0, &net.OpError{Op: "read", Net: "nats", Err: fmt.Errorf("i/o timeout")}
 	}
 }
 
 func (c *NATSConn) Write(b []byte) (n int, err error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.closed {
+		c.mu.Unlock()
 		return 0, io.ErrClosedPipe
+	}
+	deadline := c.writeDeadline
+	c.mu.Unlock()
+
+	// Check if deadline has already passed
+	if !deadline.IsZero() {
+		if time.Now().After(deadline) {
+			return 0, &net.OpError{Op: "write", Net: "nats", Err: fmt.Errorf("i/o timeout")}
+		}
 	}
 
 	msg := &transport.Message{
@@ -319,8 +348,20 @@ func (c *NATSConn) Write(b []byte) (n int, err error) {
 
 	// The subject should be something like "p.data.to_server.{connID}"
 	subject := "p.data.to_server." + c.id
-	err = c.transport.Publish(context.Background(), subject, msg)
+
+	// Create context with deadline if set
+	ctx := context.Background()
+	if !deadline.IsZero() {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
+	}
+
+	err = c.transport.Publish(ctx, subject, msg)
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return 0, &net.OpError{Op: "write", Net: "nats", Err: fmt.Errorf("i/o timeout")}
+		}
 		return 0, err
 	}
 	return len(b), nil
@@ -347,15 +388,25 @@ func (c *NATSConn) RemoteAddr() net.Addr {
 }
 
 func (c *NATSConn) SetDeadline(t time.Time) error {
-	return nil // Not implemented
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.readDeadline = t
+	c.writeDeadline = t
+	return nil
 }
 
 func (c *NATSConn) SetReadDeadline(t time.Time) error {
-	return nil // Not implemented
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.readDeadline = t
+	return nil
 }
 
 func (c *NATSConn) SetWriteDeadline(t time.Time) error {
-	return nil // Not implemented
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.writeDeadline = t
+	return nil
 }
 
 func (nt *NATSTransport) Dial(ctx context.Context, proxyAddr, remoteAddr string) (net.Conn, error) {
