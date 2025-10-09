@@ -211,4 +211,4 @@ Both components use logrus. Levels: `debug`, `info`, `warn`, `error` (set via `-
 - The server does not currently expose an HTTP endpoint (despite the Dockerfile healthcheck example).
 
 ## License
-No license specified in this repository at the moment.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
